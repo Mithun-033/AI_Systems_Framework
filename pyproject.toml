@@ -1,0 +1,22 @@
+[project]
+name = "ai-systems-framework"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "triton-windows>=3.8.0.post29",
+    "rich>=15.0.0",
+    "torch>=2.11.0",
+    "torchinfo>=1.8.0",
+    "torchvision>=0.26.0",
+    "tqdm>=4.66.5"
+]
+
+[[tool.uv.index]]
+name = "pytorch-cuda-build-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cuda-build-cu128" }
