@@ -43,11 +43,14 @@ def standard_kernel_2d(
     b_ptrs = b_ptr + offset_k[:, None] * stride_bk + offset_n[None, :] * stride_bn
     acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
+    mask_m = offset_m[:, None] < M
+    mask_n = offset_n[None, :] < N
+
     for k in range(0, K, BLOCK_SIZE_K):
         mask_k = offset_k + k < K
 
-        a = tl.load(a_ptrs, mask=(offset_m[:, None] < M) & mask_k[None, :], other=0.0)
-        b = tl.load(b_ptrs, mask=mask_k[:, None] & (offset_n[None, :] < N), other=0.0)
+        a = tl.load(a_ptrs, mask = mask_m & mask_k[None, :], other=0.0)
+        b = tl.load(b_ptrs, mask=mask_k[:, None] & mask_n, other=0.0)
         acc = tl.dot(a, b, acc)
 
         a_ptrs += BLOCK_SIZE_K * stride_ak
@@ -140,11 +143,14 @@ def gram_kernel_2d(
     b_ptrs = a_ptr + offset_k[:, None] * stride_ak + offset_n[None, :] * stride_am
     acc = tl.zeros((BLOCK_M, BLOCK_M), dtype=tl.float32)
 
+    mask_m = offset_m[:, None] < M
+    mask_n = offset_n[None, :] < M
+
     for k in range(0, K, BLOCK_K):
         mask_k = offset_k + k < K
 
-        a = tl.load(a_ptrs, mask=(offset_m[:, None] < M) & mask_k[None, :], other=0.0)
-        b = tl.load(b_ptrs, mask=mask_k[:, None] & (offset_n[None, :] < M), other=0.0)
+        a = tl.load(a_ptrs, mask=mask_m & mask_k[None, :], other=0.0)
+        b = tl.load(b_ptrs, mask=mask_k[:, None] & mask_n, other=0.0)
         acc = tl.dot(a, b, acc)
 
         a_ptrs += BLOCK_K * stride_ak
@@ -231,11 +237,14 @@ def split_k_matmul(
     b_ptrs = b_ptr + offset_k[:, None] * stride_bk + offset_n[None, :] * stride_bn
     acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
+    mask_m = offset_m[:, None] < M
+    mask_n = offset_n[None, :] < N
+
     for k in range(0, GROUP_SIZE_K, BLOCK_SIZE_K):
         mask_k = (offset_k + k) < K
         
-        a = tl.load(a_ptrs, mask=(offset_m[:, None] < M) & mask_k[None, :], other=0.0)
-        b = tl.load(b_ptrs, mask=mask_k[:, None] & (offset_n[None, :] < N), other=0.0)
+        a = tl.load(a_ptrs, mask=mask_m & mask_k[None, :], other=0.0)
+        b = tl.load(b_ptrs, mask=mask_k[:, None] & mask_n, other=0.0)
         acc = tl.dot(a, b, acc)
 
         a_ptrs += BLOCK_SIZE_K * stride_ak
@@ -255,13 +264,12 @@ def solve_tall_matmul(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor):
 
     BLOCK_SIZE_M = 64
     BLOCK_SIZE_N = 64
-    BLOCK_SIZE_K = 32
+    BLOCK_SIZE_K = 64
     GROUP_SIZE_M = 8
     GROUP_SIZE_K = 64
 
     M, K = a.shape
     _, N = b.shape
-    c.zero_()
 
     grid = (triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, BLOCK_SIZE_N),triton.cdiv(K, GROUP_SIZE_K),)
 
