@@ -79,9 +79,9 @@ def solve_standard_kernel_2d(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor):
     grid = (triton.cdiv(M, BLOCK_SIZE_M) * triton.cdiv(N, BLOCK_SIZE_N),)
 
     standard_kernel_2d[grid](
-        a_ptr=a.data_ptr(),
-        b_ptr=b.data_ptr(),
-        c_ptr=c.data_ptr(),
+        a_ptr=a,
+        b_ptr=b,
+        c_ptr=c,
         M=M,
         K=K,
         N=N,
@@ -117,7 +117,7 @@ def gram_kernel_2d(
     that value from the transpose of the block mirrored w.r.t to the diagonal of the matrix. (ie) jus skip calclation of all the upper/lower
     triangular blocks entirely, almost reduces the cost of compute by half."""
 
-    pid = tl.program_id(axix=0)
+    pid = tl.program_id(axis=0)
     num_pid_m = tl.cdiv(M, BLOCK_M)
     num_pid_n = tl.cdiv(M, BLOCK_M)
     num_pid_in_group = GROUP_M * num_pid_n
@@ -172,11 +172,11 @@ def solve_gram_kernel_2d(a: torch.Tensor, c=torch.Tensor):
     GROUP_M = 8
 
     M, K = a.shape
-    grid = (tl.cdiv(M, BLOCK_M) ** 2,)
+    grid = (triton.cdiv(M, BLOCK_M) ** 2,)
 
     gram_kernel_2d[grid](
-        a=a.data_ptr(),
-        c=c.data_ptr(),
+        a_ptr=a,
+        c_ptr=c,
         M=M,
         K=K,
         stride_am=a.stride(0),
