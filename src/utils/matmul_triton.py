@@ -266,7 +266,7 @@ def solve_tall_matmul(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor):
     BLOCK_SIZE_N = 64
     BLOCK_SIZE_K = 64
     GROUP_SIZE_M = 8
-    GROUP_SIZE_K = 64
+    GROUP_SIZE_K = 512
 
     M, K = a.shape
     _, N = b.shape
