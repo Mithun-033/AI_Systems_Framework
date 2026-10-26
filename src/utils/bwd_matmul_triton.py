@@ -168,3 +168,101 @@ def solve_b_grad_func(dc : torch.Tensor, a : torch.Tensor, b_grad : torch.Tensor
         BLOCK_N = BLOCK_N,
         GROUP_M = GROUP_M
     )
+
+import torch
+import triton
+import triton.language as tl
+
+
+@triton.jit
+def bwd_aat_kernel(
+    dc_ptr,
+    a_ptr,
+    da_ptr,
+    M, K,
+    stride_dcm, stride_dcn,  # strides for dC (M x M)
+    stride_am,  stride_ak,   # strides for A  (M x K)
+    stride_dam, stride_dak,  # strides for dA (M x K)
+    BLOCK_M: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    BLOCK_R: tl.constexpr,   # Reduction block size along dimension M
+    GROUP_M: tl.constexpr,
+):
+    """
+    Computes dA = (dC + dC.T) @ A
+    Output dA has shape (M, K)
+    Reduction dimension is M
+    """
+    pid = tl.program_id(axis=0)
+    num_pid_m = tl.cdiv(M, BLOCK_M)
+    num_pid_k = tl.cdiv(K, BLOCK_K)
+    num_pid_in_group = num_pid_k * GROUP_M
+
+    group_id = pid // num_pid_in_group
+    first_pid_m = group_id * GROUP_M
+    group_size_m = tl.minimum(num_pid_m - first_pid_m, GROUP_M)
+
+    pid_m = first_pid_m + (pid % group_size_m)
+    pid_k = (pid % num_pid_in_group) // group_size_m
+
+    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)
+    offs_k = pid_k * BLOCK_K + tl.arange(0, BLOCK_K)
+    offs_r = tl.arange(0, BLOCK_R)
+
+    m_mask = offs_m < M
+    k_mask = offs_k < K
+
+    # dc_ptrs loads dC[m, r] -> shape (BLOCK_M, BLOCK_R)
+    dc_ptrs = dc_ptr + (offs_m[:, None] * stride_dcm + offs_r[None, :] * stride_dcn)
+    # dc_t_ptrs loads dC[r, m] -> shape (BLOCK_R, BLOCK_M) 
+    dc_t_ptrs = dc_ptr + (offs_r[:, None] * stride_dcm + offs_m[None, :] * stride_dcn)
+    # Pointers for A: A[r, k] -> shape (BLOCK_R, BLOCK_K)
+    a_ptrs = a_ptr + (offs_r[:, None] * stride_am + offs_k[None, :] * stride_ak)
+
+    acc = tl.zeros((BLOCK_M, BLOCK_K), dtype=tl.float32)
+
+    # 3. Reduction loop over dimension M
+    for r in range(0, M, BLOCK_R):
+        r_mask = (r + offs_r) < M
+        dc = tl.load(dc_ptrs, mask=m_mask[:, None] & r_mask[None, :], other=0.0)
+        dc_t_raw = tl.load(dc_t_ptrs, mask=r_mask[:, None] & m_mask[None, :], other=0.0)
+        dc_t = tl.trans(dc_t_raw)
+
+        s = dc + dc_t
+        a = tl.load(a_ptrs, mask=r_mask[:, None] & k_mask[None, :], other=0.0)
+        acc += tl.dot(s, a)
+
+        dc_ptrs += BLOCK_R * stride_dcn
+        dc_t_ptrs += BLOCK_R * stride_dcm
+        a_ptrs += BLOCK_R * stride_am
+
+    da = acc.to(a_ptr.dtype.element_ty)
+    out_ptrs = da_ptr + (offs_m[:, None] * stride_dam + offs_k[None, :] * stride_dak)
+    tl.store(out_ptrs, da, mask=m_mask[:, None] & k_mask[None, :])
+
+
+def bwd_aat(dc: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
+    assert dc.is_cuda and a.is_cuda
+    M, K = a.shape
+    assert dc.shape == (M, M), f"Expected dC of shape ({M}, {M}), got {dc.shape}"
+
+    da = torch.empty_like(a)
+
+    grid = lambda META: (
+        triton.cdiv(M, META['BLOCK_M']) * triton.cdiv(K, META['BLOCK_K']),
+    )
+
+    bwd_aat_kernel[grid](
+        dc_ptr=dc,
+        a_ptr=a,
+        da_ptr=da,
+        M=M, K=K,
+        stride_dcm=dc.stride(0), stride_dcn=dc.stride(1),
+        stride_am=a.stride(0),   stride_ak=a.stride(1),
+        stride_dam=da.stride(0), stride_dak=da.stride(1),
+        BLOCK_M=64,
+        BLOCK_K=64,
+        BLOCK_R=32,
+        GROUP_M=8,
+    )
+    return da
