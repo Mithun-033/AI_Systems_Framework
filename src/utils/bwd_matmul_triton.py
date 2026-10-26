@@ -169,23 +169,18 @@ def solve_b_grad_func(dc : torch.Tensor, a : torch.Tensor, b_grad : torch.Tensor
         GROUP_M = GROUP_M
     )
 
-import torch
-import triton
-import triton.language as tl
-
-
 @triton.jit
 def bwd_aat_kernel(
     dc_ptr,
     a_ptr,
     da_ptr,
     M, K,
-    stride_dcm, stride_dcn,  # strides for dC (M x M)
-    stride_am,  stride_ak,   # strides for A  (M x K)
-    stride_dam, stride_dak,  # strides for dA (M x K)
+    stride_dcm, stride_dcn,  
+    stride_am,  stride_ak,   
+    stride_dam, stride_dak,  
     BLOCK_M: tl.constexpr,
     BLOCK_K: tl.constexpr,
-    BLOCK_R: tl.constexpr,   # Reduction block size along dimension M
+    BLOCK_R: tl.constexpr,  
     GROUP_M: tl.constexpr,
 ):
     """
@@ -220,8 +215,6 @@ def bwd_aat_kernel(
     a_ptrs = a_ptr + (offs_r[:, None] * stride_am + offs_k[None, :] * stride_ak)
 
     acc = tl.zeros((BLOCK_M, BLOCK_K), dtype=tl.float32)
-
-    # 3. Reduction loop over dimension M
     for r in range(0, M, BLOCK_R):
         r_mask = (r + offs_r) < M
         dc = tl.load(dc_ptrs, mask=m_mask[:, None] & r_mask[None, :], other=0.0)
@@ -248,9 +241,11 @@ def bwd_aat(dc: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
 
     da = torch.empty_like(a)
 
-    grid = lambda META: (
-        triton.cdiv(M, META['BLOCK_M']) * triton.cdiv(K, META['BLOCK_K']),
-    )
+    BLOCK_M = 64
+    BLOCK_K = 64
+    BLOCK_R = 32
+    GROUP_M = 8
+    grid = (triton.cdiv(M, BLOCK_M) * triton.cdiv(K, BLOCK_K),)
 
     bwd_aat_kernel[grid](
         dc_ptr=dc,
@@ -260,9 +255,9 @@ def bwd_aat(dc: torch.Tensor, a: torch.Tensor) -> torch.Tensor:
         stride_dcm=dc.stride(0), stride_dcn=dc.stride(1),
         stride_am=a.stride(0),   stride_ak=a.stride(1),
         stride_dam=da.stride(0), stride_dak=da.stride(1),
-        BLOCK_M=64,
-        BLOCK_K=64,
-        BLOCK_R=32,
-        GROUP_M=8,
+        BLOCK_M=BLOCK_M,
+        BLOCK_K=BLOCK_K,
+        BLOCK_R=BLOCK_R,
+        GROUP_M=GROUP_M,
     )
     return da
