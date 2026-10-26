@@ -22,7 +22,7 @@ def standard_kernel_2d(
     BLOCK_SIZE_K: tl.constexpr,
     GROUP_SIZE_M: tl.constexpr,
 ):
-    """Kernel for any standard 2D matrix, uses grouped-id matmul kernel for better L2 cache use"""
+    """Kernel for any standard 2D matrix, uses thread block swizzling matmul kernel for better L2 cache use"""
     pid = tl.program_id(axis=0)
     num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)
     num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)
@@ -111,15 +111,10 @@ def gram_kernel_2d(
     stride_ak,
     stride_cm,
     stride_cmm,
-    BLOCK_M : tl.constexpr,
-    BLOCK_K : tl.constexpr,
-    GROUP_M : tl.constexpr,
+    BLOCK_M: tl.constexpr,
+    BLOCK_K: tl.constexpr,
+    GROUP_M: tl.constexpr,
 ):
-    """Kernel for symmetric matmul ie A @ A.T
-    Here too I use thread block sizzling, but the major payoff comes from skipping symmetric output block calculation and jus getting
-    that value from the transpose of the block mirrored w.r.t to the diagonal of the matrix. (ie) jus skip calclation of all the upper/lower
-    triangular blocks entirely, almost reduces the cost of compute by half."""
-
     pid = tl.program_id(axis=0)
     num_pid_m = tl.cdiv(M, BLOCK_M)
     num_pid_n = tl.cdiv(M, BLOCK_M)
@@ -140,17 +135,18 @@ def gram_kernel_2d(
     offset_k = tl.arange(0, BLOCK_K)
 
     a_ptrs = a_ptr + offset_m[:, None] * stride_am + offset_k[None, :] * stride_ak
-    b_ptrs = a_ptr + offset_k[:, None] * stride_ak + offset_n[None, :] * stride_am
+    b_ptrs = a_ptr + offset_n[:, None] * stride_am + offset_k[None, :] * stride_ak
     acc = tl.zeros((BLOCK_M, BLOCK_M), dtype=tl.float32)
 
     mask_m = offset_m[:, None] < M
-    mask_n = offset_n[None, :] < M
+    mask_n = offset_n[:, None] < M
 
     for k in range(0, K, BLOCK_K):
-        mask_k = offset_k + k < K
+        mask_k = (offset_k + k < K)[None, :]
 
-        a = tl.load(a_ptrs, mask=mask_m & mask_k[None, :], other=0.0)
-        b = tl.load(b_ptrs, mask=mask_k[:, None] & mask_n, other=0.0)
+        a = tl.load(a_ptrs, mask=mask_m & mask_k, other=0.0)
+        b_raw = tl.load(b_ptrs, mask=mask_n & mask_k, other=0.0)
+        b = tl.trans(b_raw)
         acc = tl.dot(a, b, acc)
 
         a_ptrs += BLOCK_K * stride_ak
