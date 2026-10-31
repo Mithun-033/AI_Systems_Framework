@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from matmul_triton import (
+from utils.fwd_matmul_triton import (
     solve_gram_kernel_2d,
     solve_standard_kernel_2d,
     solve_tall_matmul,
