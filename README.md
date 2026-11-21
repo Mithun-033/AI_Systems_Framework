@@ -1,9 +1,9 @@
 # AI Systems Framework
 
 GPU-oriented training primitives implemented with PyTorch and Triton. The
-repository currently contains custom optimizer and loss wrappers plus a
+repository currently contains matmult kernels, custom optimizers and loss funcs plus a
 Triton implementation of the Muon optimizer's Newton-Schulz matrix
-transformation.
+transformation with three kernel launch.
 
 ## What is implemented
 
